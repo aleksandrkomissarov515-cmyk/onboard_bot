@@ -101,34 +101,12 @@ def get_user_data(user_id):
         user_data[user_id] = {"name": None, "day": 0, "quiz": False, "survey": False}
     return user_data[user_id]
 
-def ask_name_if_needed(callback: types.CallbackQuery, action_callback):
-    """Проверяет, есть ли имя. Если нет — просит представиться."""
-    user_id = callback.from_user.id
-    user = get_user_data(user_id)
-    
-    if not user["name"]:
-        # Удаляем предыдущее сообщение
-        try:
-            await callback.message.delete()
-        except:
-            pass
-        
-        await callback.message.answer(
-            "👋 Привет! Для начала давай познакомимся.\n\n"
-            "Напиши своё имя, и мы продолжим! 🚀"
-        )
-        await callback.answer()
-        return False
-    
-    return True
-
 # ========== КОМАНДА /start ==========
 @dp.message(CommandStart())
 async def start_command(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
     
-    # Всегда показываем главное меню с кнопками
     welcome_text = """
 👋 Привет! Я — Onboard AI, твой цифровой наставник.
 
@@ -136,7 +114,6 @@ async def start_command(message: Message):
 
 💡 Если ты здесь впервые — просто нажми на любую кнопку, и я попрошу представиться.
 """
-    
     await message.answer(welcome_text, reply_markup=main_menu_keyboard())
 
 # ========== ОБРАБОТЧИК ЛЮБЫХ ТЕКСТОВЫХ СООБЩЕНИЙ ==========
@@ -186,7 +163,6 @@ async def handle_guide(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = get_user_data(user_id)
     
-    # Если имени нет — просим представиться
     if not user["name"]:
         await callback.message.delete()
         await callback.message.answer(
@@ -229,12 +205,10 @@ async def handle_mentor(callback: types.CallbackQuery):
     await callback.message.delete()
     
     if not user["name"]:
-        mentor_text = """
-👋 Привет! Для начала давай познакомимся.
-
-Напиши своё имя, и я свяжу тебя с ментором! 🆘
-"""
-        await callback.message.answer(mentor_text)
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и я свяжу тебя с ментором! 🆘"
+        )
         await callback.answer()
         return
     
@@ -446,11 +420,42 @@ async def handle_faq_callback(callback: types.CallbackQuery):
     await callback.message.answer("🔙 Назад:", reply_markup=back_to_faq_keyboard())
     await callback.answer()
 
+# ========== ЕЖЕДНЕВНЫЕ НАПОМИНАНИЯ ==========
+
+async def send_daily_reminders():
+    """Функция для ежедневных напоминаний"""
+    while True:
+        now = datetime.now()
+        if now.hour == 9 and now.minute == 0:
+            for user_id, data in user_data.items():
+                if data.get("name") and data.get("day", 0) < 7:
+                    day = data["day"] + 1
+                    try:
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=f"""
+🌅 Доброе утро, {data['name']}!
+
+Сегодня — **День {day}** адаптации.
+
+{get_progress_bar(data['day'])}
+🎯 Нажми "План адаптации" и выбери день, чтобы узнать задачи.
+"""
+                        )
+                    except:
+                        pass
+            await asyncio.sleep(60)
+        await asyncio.sleep(60)
+
 # ========== ЗАПУСК ==========
 
 async def main():
     print("🤖 Бот Onboard AI запущен!")
-    print("✅ Работает только через кнопки!")
+    print("✅ Все функции активны!")
+    
+    # Запускаем ежедневные напоминания в фоне
+    asyncio.create_task(send_daily_reminders())
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
