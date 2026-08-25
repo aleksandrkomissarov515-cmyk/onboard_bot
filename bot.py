@@ -10,6 +10,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
+from PIL import Image, ImageDraw, ImageFont
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +18,10 @@ logging.basicConfig(level=logging.INFO)
 # Загружаем токен
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+if not BOT_TOKEN:
+    print("❌ ОШИБКА: Токен не найден! Проверьте файл .env")
+    exit(1)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -93,27 +98,6 @@ def get_all_users():
     conn.close()
     return rows
 
-# ========== GOOGLE SHEETS ==========
-def sync_to_google_sheets():
-    """Отправляет данные в Google Sheets (заглушка)"""
-    try:
-        users = get_all_users()
-        if not users:
-            return "📊 Нет данных для синхронизации."
-        
-        # Формируем CSV-файл
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала", "Дата завершения"])
-        for u in users:
-            writer.writerow(list(u))
-        
-        # Здесь будет код для отправки в Google Sheets
-        # Пока просто возвращаем сообщение
-        return f"✅ Данные готовы к синхронизации! ({len(users)} записей)"
-    except Exception as e:
-        return f"❌ Ошибка синхронизации: {e}"
-
 # ========== КЛАВИАТУРЫ ==========
 
 def main_menu_keyboard(user_id=None):
@@ -143,7 +127,6 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📥 Экспорт Excel", callback_data="admin_export")],
-        [InlineKeyboardButton(text="🔄 Синхронизация Google Sheets", callback_data="admin_sync")],
         [InlineKeyboardButton(text="📋 Список сотрудников", callback_data="admin_users")]
     ])
 
@@ -206,6 +189,32 @@ def get_progress_bar(day):
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
+def generate_certificate(name, days, rating):
+    try:
+        img = Image.new('RGB', (800, 600), color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("arial.ttf", 40)
+            font_small = ImageFont.truetype("arial.ttf", 24)
+        except:
+            font = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+        
+        draw.text((200, 100), "СЕРТИФИКАТ", fill=(0, 0, 0), font=font)
+        draw.text((100, 200), "Настоящий сертификат подтверждает, что", fill=(0, 0, 0), font=font_small)
+        draw.text((100, 250), f"{name}", fill=(0, 0, 255), font=font)
+        draw.text((100, 320), "успешно прошёл адаптацию в проекте!", fill=(0, 0, 0), font=font_small)
+        draw.text((100, 370), f"Дней: {days}/7 | Оценка уверенности: {rating}/5", fill=(0, 0, 0), font=font_small)
+        draw.text((100, 420), f"Дата: {datetime.now().strftime('%d.%m.%Y')}", fill=(0, 0, 0), font=font_small)
+        
+        img_bytes = BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        return img_bytes
+    except Exception as e:
+        print(f"❌ Ошибка генерации сертификата: {e}")
+        return None
+
 # ========== КОМАНДА /start ==========
 @dp.message(CommandStart())
 async def start_command(message: Message):
@@ -256,7 +265,8 @@ async def stats_command(message: Message):
     for u in users:
         name = u[1] or "Без имени"
         status = "✅" if u[4] else "🔄"
-        text += f"{status} {name} — День {u[2]}/7\n"
+        rating = u[3] or "—"
+        text += f"{status} {name} — День {u[2]}/7, Оценка: {rating}/5\n"
     await message.answer(text, parse_mode="Markdown")
 
 # ========== КОМАНДА /export ==========
@@ -272,13 +282,13 @@ async def export_command(message: Message):
         return
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала"])
+    writer.writerow(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала", "Дата завершения"])
     for u in users:
         writer.writerow(list(u))
     output.seek(0)
     await message.answer_document(
         types.BufferedInputFile(output.getvalue().encode('utf-8'), filename="report.csv"),
-        caption="📊 Отчёт"
+        caption="📊 Отчёт по адаптации"
     )
 
 # ========== ОБРАБОТЧИКИ КНОПОК ==========
@@ -291,7 +301,7 @@ async def handle_menu(callback: types.CallbackQuery):
     if not user:
         text = "👋 Напиши своё имя."
     else:
-        text = f"🏠 Главное меню, {user['name']}!"
+        text = f"🏠 Главное меню, {user['name']}!\n\n{get_progress_bar(user.get('day', 0))}"
     await callback.message.answer(text, reply_markup=main_menu_keyboard(user_id))
     await callback.answer()
 
@@ -303,7 +313,7 @@ async def handle_admin_panel(callback: types.CallbackQuery):
         return
     await callback.message.delete()
     await callback.message.answer(
-        "🔐 **Админ-панель**",
+        "🔐 **Админ-панель**\n\nВыберите действие:",
         parse_mode="Markdown",
         reply_markup=admin_menu_keyboard()
     )
@@ -315,10 +325,20 @@ async def handle_profile(callback: types.CallbackQuery):
     user = get_user_data(user_id)
     if not user:
         await callback.message.delete()
-        await callback.message.answer("👋 Напиши своё имя!")
+        await callback.message.answer("👋 Напиши своё имя, чтобы создать профиль!")
         await callback.answer()
         return
-    text = f"👤 **{user['name']}**\n{get_progress_bar(user.get('day', 0))}"
+    text = f"""
+👤 **Личный кабинет**
+
+Имя: {user['name']}
+📅 Дней пройдено: {user.get('day', 0)}/7
+{get_progress_bar(user.get('day', 0))}
+⭐ Оценка уверенности: {user.get('rating') or '—'}/5
+📆 Дата начала: {user.get('start_date') or '—'}
+📆 Дата завершения: {user.get('completed_date') or '—'}
+Статус: {'✅ Завершено' if user.get('completed') else '🔄 В процессе'}
+"""
     await callback.message.delete()
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=back_to_menu_keyboard())
     await callback.answer()
@@ -341,15 +361,6 @@ async def admin_export_callback(callback: types.CallbackQuery):
     await export_command(callback.message)
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "admin_sync")
-async def admin_sync_callback(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Нет доступа")
-        return
-    result = sync_to_google_sheets()
-    await callback.message.answer(result)
-    await callback.answer()
-
 @dp.callback_query(lambda c: c.data == "admin_users")
 async def admin_users_callback(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -364,7 +375,8 @@ async def admin_users_callback(callback: types.CallbackQuery):
     for u in users:
         name = u[1] or "Без имени"
         status = "✅" if u[4] else "🔄"
-        text += f"{status} {name} — День {u[2]}/7\n"
+        rating = u[3] or "—"
+        text += f"{status} {name} — День {u[2]}/7, Оценка: {rating}/5\n"
     await callback.message.answer(text, parse_mode="Markdown")
     await callback.answer()
 
@@ -376,7 +388,7 @@ async def handle_guide(callback: types.CallbackQuery):
     user = get_user_data(user_id)
     if not user:
         await callback.message.delete()
-        await callback.message.answer("👋 Напиши своё имя!")
+        await callback.message.answer("👋 Привет! Для начала давай познакомимся.\n\nНапиши своё имя, и мы начнём адаптацию! 🚀")
         await callback.answer()
         return
     await callback.message.delete()
@@ -385,35 +397,95 @@ async def handle_guide(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "faq")
 async def handle_faq(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer("👋 Привет! Для начала давай познакомимся.\n\nНапиши своё имя, и я отвечу на все вопросы! 🚀")
+        await callback.answer()
+        return
     await callback.message.delete()
     await callback.message.answer("❓ Выбери вопрос:", reply_markup=faq_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "mentor")
 async def handle_mentor(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
     await callback.message.delete()
-    await callback.message.answer("🆘 Свяжись с ментором: @mentor", reply_markup=back_to_menu_keyboard())
+    if not user:
+        await callback.message.answer("👋 Привет! Для начала давай познакомимся.\n\nНапиши своё имя, и я свяжу тебя с ментором! 🆘")
+        await callback.answer()
+        return
+    mentor_text = f"""
+🆘 {user['name']}, не переживай! Я помогу тебе.
+
+Можешь связаться с ментором напрямую:
+@mentor_username
+
+Или напиши в общий чат:
+@chat_username
+
+Ты не один! 💪
+"""
+    await callback.message.answer(mentor_text, reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "contacts")
 async def handle_contacts(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer("👋 Привет! Для начала давай познакомимся.\n\nНапиши своё имя, и я покажу контакты команды! 👥")
+        await callback.answer()
+        return
     await callback.message.delete()
-    await callback.message.answer("👥 Контакты:\n@username", reply_markup=back_to_menu_keyboard())
+    contacts_text = """
+👥 Ключевые люди:
+
+🟢 Руководитель — @username
+🟡 Тимлид — @username
+🔵 Ментор — @username
+🟣 DevOps — @username
+"""
+    await callback.message.answer(contacts_text, reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "resources")
 async def handle_resources(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer("👋 Привет! Для начала давай познакомимся.\n\nНапиши своё имя, и я покажу все полезные ресурсы! 📚")
+        await callback.answer()
+        return
     await callback.message.delete()
-    await callback.message.answer("📚 Ресурсы:\n[ссылка]", reply_markup=back_to_menu_keyboard())
+    resources_text = """
+📚 Ресурсы:
+
+📁 Документация — [ссылка]
+📊 Jira — [ссылка]
+💬 Чат — [ссылка]
+"""
+    await callback.message.answer(resources_text, reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "help")
 async def handle_help(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer("👋 Привет! Для начала давай познакомимся.\n\nНапиши своё имя, и я покажу, как работает бот! 📋")
+        await callback.answer()
+        return
     await callback.message.delete()
-    await callback.message.answer("📋 Используй кнопки!", reply_markup=back_to_menu_keyboard())
+    await callback.message.answer("📋 Используй кнопки меню для навигации!", reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
-# ========== ДНИ ==========
+# ========== ДНИ С ВИКТОРИНОЙ ==========
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("day_"))
 async def handle_day(callback: types.CallbackQuery):
@@ -429,34 +501,106 @@ async def handle_day(callback: types.CallbackQuery):
     save_user_data(user_id, user)
     
     days_info = {
-        1: "📅 День 1: Знакомство с компанией",
-        2: "📅 День 2: Обзор проекта",
-        3: "📅 День 3: Инструменты",
-        4: "📅 День 4: Процессы",
-        5: "📅 День 5: Первая задача",
-        6: "📅 День 6: Обратная связь",
-        7: "📅 День 7: Итоги 🎉"
+        1: "📅 **День 1: Знакомство с компанией**\n\n✅ Познакомиться с командой\n✅ Получить доступы\n✅ Установить ПО\n✅ Изучить структуру компании",
+        2: "📅 **День 2: Обзор проекта**\n\n✅ Изучить цели и задачи\n✅ Понять свою роль\n✅ Посмотреть текущий статус\n✅ Изучить ключевые метрики",
+        3: "📅 **День 3: Инструменты**\n\n✅ Изучить стек технологий\n✅ Настроить локальное окружение\n✅ Запустить проект локально\n✅ Изучить CI/CD",
+        4: "📅 **День 4: Процессы**\n\n✅ Как планируем задачи\n✅ Как делаем ревью\n✅ Как тестируем\n✅ Как деплоим",
+        5: "📅 **День 5: Первая задача**\n\n✅ Взять задачу\n✅ Выполнить её\n✅ Отправить на проверку\n✅ Получить фидбек",
+        6: "📅 **День 6: Обратная связь**\n\n✅ Обсудить впечатления\n✅ Задать вопросы\n✅ Получить фидбек\n✅ Узнать зоны роста",
+        7: "📅 **День 7: Итоги**\n\n✅ Подвести итоги недели\n✅ Обсудить план развития\n✅ Чувствовать себя уверенно 💪"
     }
     
     await callback.message.delete()
-    await callback.message.answer(days_info.get(day_num, "❌ День не найден"))
+    await callback.message.answer(days_info.get(day_num, "❌ День не найден"), parse_mode="Markdown")
     await callback.message.answer(f"{get_progress_bar(user.get('day', 0))}")
     
     await callback.message.answer(
-        f"📊 Оцени сложность дня {day_num}:",
+        f"📊 **Оцени сложность дня {day_num}:**\n\n1 — очень сложно\n5 — очень легко",
+        parse_mode="Markdown",
         reply_markup=difficulty_keyboard(day_num)
     )
     
-    if day_num == 7:
-        await callback.message.answer("📊 Пройди опрос!", reply_markup=survey_keyboard())
+    if day_num < 7:
+        await callback.message.answer("🧠 **Тест:** Ответь на 3 вопроса!", parse_mode="Markdown")
+        await ask_quiz(callback.message, day_num)
+    else:
+        await callback.message.answer("📊 **Ты прошёл всю адаптацию! 🎉**\n\nОтветь на несколько вопросов.", parse_mode="Markdown")
+        await ask_survey(callback.message)
     
-    await callback.message.answer("🔙 Назад:", reply_markup=back_to_guide_keyboard())
+    await callback.message.answer("🔙 Вернуться к плану:", reply_markup=back_to_guide_keyboard())
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("diff_"))
-async def handle_difficulty(callback: types.CallbackQuery):
-    await callback.message.answer(f"✅ Оценено!")
+# ========== ТЕСТ (3 вопроса) ==========
+
+async def ask_quiz(message: Message, day: int):
+    quizzes = {
+        1: [
+            {"question": "Что нужно сделать в первый день?", "options": ["Познакомиться с командой", "Написать код", "Уйти домой"], "correct": 1},
+            {"question": "Кто твой наставник?", "options": ["@mentor", "Руководитель", "Коллега"], "correct": 1},
+            {"question": "Где взять доступы?", "options": ["У наставника", "В интернете", "Нигде"], "correct": 1}
+        ],
+        2: [
+            {"question": "Что важно изучить во второй день?", "options": ["Цели проекта", "Меню столовой", "Погоду"], "correct": 1},
+            {"question": "Какую роль ты выполняешь?", "options": ["Разработчик", "Тестировщик", "Аналитик"], "correct": 1},
+            {"question": "Где посмотреть статус проекта?", "options": ["В Jira", "В Notion", "В Telegram"], "correct": 1}
+        ],
+        3: [
+            {"question": "Что нужно сделать в третий день?", "options": ["Настроить окружение", "Посмотреть кино", "Сделать ремонт"], "correct": 1},
+            {"question": "Какой стек используется?", "options": ["Python", "Java", "JavaScript"], "correct": 1},
+            {"question": "Где лежит код?", "options": ["GitHub", "GitLab", "Bitbucket"], "correct": 1}
+        ],
+        4: [
+            {"question": "Что такое код-ревью?", "options": ["Проверка кода командой", "Написание кода", "Удаление кода"], "correct": 1},
+            {"question": "Кто делает код-ревью?", "options": ["Тимлид", "Все разработчики", "Тестировщики"], "correct": 1},
+            {"question": "Где происходит код-ревью?", "options": ["GitHub PR", "В чате", "На созвоне"], "correct": 1}
+        ],
+        5: [
+            {"question": "Что делать с первой задачей?", "options": ["Выполнить и отправить", "Игнорировать", "Отложить"], "correct": 1},
+            {"question": "Кому отправлять задачу?", "options": ["Наставнику", "Тимлиду", "Всем чатом"], "correct": 1},
+            {"question": "Что делать после выполнения?", "options": ["Получить фидбек", "Забыть", "Уйти"], "correct": 1}
+        ],
+        6: [
+            {"question": "Зачем нужна обратная связь?", "options": ["Чтобы улучшаться", "Чтобы обижаться", "Чтобы спорить"], "correct": 1},
+            {"question": "Как часто нужно получать фидбек?", "options": ["Регулярно", "Раз в год", "Никогда"], "correct": 1},
+            {"question": "Что делать с фидбеком?", "options": ["Работать над собой", "Игнорировать", "Спорить"], "correct": 1}
+        ]
+    }
+    
+    quiz = quizzes.get(day, [])
+    if not quiz:
+        return
+    
+    for i, q in enumerate(quiz, 1):
+        text = f"**Вопрос {i}:** {q['question']}\n\n"
+        for j, opt in enumerate(q['options'], 1):
+            text += f"{j}. {opt}\n"
+        await message.answer(text, parse_mode="Markdown", reply_markup=quiz_keyboard(i))
+
+def quiz_keyboard(question_num):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1", callback_data=f"quiz_{question_num}_1"),
+         InlineKeyboardButton(text="2", callback_data=f"quiz_{question_num}_2"),
+         InlineKeyboardButton(text="3", callback_data=f"quiz_{question_num}_3")]
+    ])
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("quiz_"))
+async def handle_quiz_answer(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    q_num = int(parts[1])
+    answer = int(parts[2])
+    
+    # Проверка правильности (все правильные ответы = 1 для простоты)
+    if answer == 1:
+        await callback.message.answer("✅ **Правильно!** 🎉", parse_mode="Markdown")
+    else:
+        await callback.message.answer("❌ **Неправильно.** Правильный ответ: 1", parse_mode="Markdown")
+    
     await callback.answer()
+
+# ========== ОПРОС ==========
+
+async def ask_survey(message: Message):
+    await message.answer("📊 **Оцени уверенность в проекте (1–5):**", parse_mode="Markdown", reply_markup=survey_keyboard())
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("survey_"))
 async def handle_survey(callback: types.CallbackQuery):
@@ -469,11 +613,34 @@ async def handle_survey(callback: types.CallbackQuery):
     user["completed_date"] = datetime.now().isoformat()
     save_user_data(user_id, user)
     
-    report = f"📊 {user['name']} завершил адаптацию! Оценка: {rating}/5"
-    await bot.send_message(chat_id=ADMIN_ID, text=report)
+    report = f"""
+📊 **Отчёт об адаптации**
+
+👤 Сотрудник: {user['name']}
+📅 Дней пройдено: {user.get('day', 0)}/7
+⭐ Оценка уверенности: {rating}/5
+📆 Дата завершения: {user['completed_date']}
+"""
+    
+    await bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
+    
+    # Генерируем сертификат
+    cert = generate_certificate(user['name'], user.get('day', 0), rating)
+    if cert:
+        await callback.message.answer_document(
+            types.BufferedInputFile(cert.getvalue(), filename="certificate.png"),
+            caption="🎓 **Ваш сертификат об окончании адаптации!**",
+            parse_mode="Markdown"
+        )
     
     await callback.message.delete()
-    await callback.message.answer(f"🎉 Спасибо, {user['name']}!", reply_markup=main_menu_keyboard(user_id))
+    await callback.message.answer(f"""
+📊 **Спасибо за обратную связь, {user['name']}!**
+
+Твоя оценка: {rating}/5 ⭐
+
+Ты прошёл полный курс адаптации! 🎉
+""", reply_markup=main_menu_keyboard(user_id))
     await callback.answer()
 
 # ========== FAQ ==========
@@ -482,14 +649,14 @@ async def handle_survey(callback: types.CallbackQuery):
 async def handle_faq_callback(callback: types.CallbackQuery):
     faq_num = int(callback.data.split("_")[1])
     faq_info = {
-        1: "❓ Доступы — у наставника.",
-        2: "❓ Окружение — в документации.",
-        3: "❓ Наставник — @mentor.",
-        4: "❓ Документы — в Notion.",
-        5: "❓ Daily в 10:00."
+        1: "❓ Где взять доступы?\n\nОбратись к наставнику или тимлиду.",
+        2: "❓ Как настроить окружение?\n\nВсё в документации: [ссылка]",
+        3: "❓ Кто мой наставник?\n\n@mentor_username",
+        4: "❓ Где документы?\n\nNotion/Confluence: [ссылка]",
+        5: "❓ Когда встречи?\n\nDaily в 10:00 по Москве"
     }
     await callback.message.delete()
-    await callback.message.answer(faq_info.get(faq_num, "❌ Не найден"))
+    await callback.message.answer(faq_info.get(faq_num, "❌ Вопрос не найден"))
     await callback.message.answer("🔙 Назад:", reply_markup=back_to_faq_keyboard())
     await callback.answer()
 
@@ -500,6 +667,7 @@ async def handle_any_text(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
     
+    # Если это команда (начинается с /) — игнорируем, чтобы не перехватывать
     if message.text and message.text.startswith('/'):
         await message.answer("❌ Неизвестная команда. Используй /help для списка команд.")
         return
@@ -510,7 +678,7 @@ async def handle_any_text(message: Message):
         await message.answer(f"🎉 Привет, {user['name']}!", reply_markup=main_menu_keyboard(user_id))
         return
     
-    await message.answer("😊 Используй кнопки!", reply_markup=main_menu_keyboard(user_id))
+    await message.answer(f"😊 {user['name']}, я работаю только по кнопкам!\n\nИспользуй меню ниже 👇", reply_markup=main_menu_keyboard(user_id))
 
 # ========== ЗАПУСК ==========
 
