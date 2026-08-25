@@ -1,4 +1,27 @@
 import os
+import subprocess
+import sys
+
+# ========== АВТОМАТИЧЕСКАЯ УСТАНОВКА ЗАВИСИМОСТЕЙ ==========
+def install_requirements():
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--no-cache-dir"])
+        print("✅ Все зависимости установлены!")
+        return True
+    except Exception as e:
+        print(f"⚠️ Ошибка установки зависимостей: {e}")
+        return False
+
+# Проверяем и устанавливаем зависимости при первом запуске
+if not os.path.exists(".deps_installed"):
+    print("📦 Устанавливаю зависимости...")
+    if install_requirements():
+        with open(".deps_installed", "w") as f:
+            f.write("installed")
+    else:
+        print("❌ Не удалось установить зависимости. Проверьте requirements.txt")
+
+# ========== ОСНОВНЫЕ ИМПОРТЫ ==========
 import asyncio
 import logging
 import sqlite3
@@ -10,7 +33,14 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw, ImageFont
+
+# Пытаемся импортировать Pillow (если не установлена — будет ошибка, но мы уже установили)
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    PILLOW_AVAILABLE = True
+except ImportError:
+    PILLOW_AVAILABLE = False
+    print("⚠️ Pillow не установлена. Функция сертификатов будет недоступна.")
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +48,10 @@ logging.basicConfig(level=logging.INFO)
 # Загружаем токен
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+if not BOT_TOKEN:
+    print("❌ ОШИБКА: Токен не найден! Проверьте файл .env")
+    sys.exit(1)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -186,6 +220,9 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def generate_certificate(name, days, rating):
+    if not PILLOW_AVAILABLE:
+        return None
+    
     img = Image.new('RGB', (800, 600), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
     try:
@@ -207,7 +244,8 @@ def generate_certificate(name, days, rating):
     img_bytes.seek(0)
     return img_bytes
 
-# ========== КОМАНДА /start ==========
+# ========== КОМАНДЫ ==========
+
 @dp.message(CommandStart())
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -227,7 +265,6 @@ async def start_command(message: Message):
 """
     await message.answer(welcome_text, reply_markup=main_menu_keyboard(user_id))
 
-# ========== КОМАНДА /admin (ОБРАБОТЧИК ДОБАВЛЕН) ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
     user_id = message.from_user.id
@@ -242,7 +279,6 @@ async def admin_panel(message: Message):
         reply_markup=admin_menu_keyboard()
     )
 
-# ========== КОМАНДА /stats ==========
 @dp.message(Command("stats"))
 async def stats_command(message: Message):
     user_id = message.from_user.id
@@ -260,7 +296,6 @@ async def stats_command(message: Message):
         text += f"{status} {name} — День {u[2]}/7\n"
     await message.answer(text, parse_mode="Markdown")
 
-# ========== КОМАНДА /export ==========
 @dp.message(Command("export"))
 async def export_command(message: Message):
     user_id = message.from_user.id
@@ -323,8 +358,6 @@ async def handle_profile(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=back_to_menu_keyboard())
     await callback.answer()
-
-# ========== АДМИН-КНОПКИ ==========
 
 @dp.callback_query(lambda c: c.data == "admin_stats")
 async def admin_stats_callback(callback: types.CallbackQuery):
@@ -421,7 +454,7 @@ async def handle_day(callback: types.CallbackQuery):
     save_user_data(user_id, user)
     
     days_info = {
-        1: "📅 День 1: Знакомство",
+        1: "📅 День 1: Знакомство с компанией",
         2: "📅 День 2: Обзор проекта",
         3: "📅 День 3: Инструменты",
         4: "📅 День 4: Процессы",
@@ -445,15 +478,10 @@ async def handle_day(callback: types.CallbackQuery):
     await callback.message.answer("🔙 Назад:", reply_markup=back_to_guide_keyboard())
     await callback.answer()
 
-# ========== ОЦЕНКА СЛОЖНОСТИ ==========
-
 @dp.callback_query(lambda c: c.data and c.data.startswith("diff_"))
 async def handle_difficulty(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
     await callback.message.answer(f"✅ Оценено!")
     await callback.answer()
-
-# ========== ОПРОС ==========
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("survey_"))
 async def handle_survey(callback: types.CallbackQuery):
@@ -469,11 +497,14 @@ async def handle_survey(callback: types.CallbackQuery):
     report = f"📊 {user['name']} завершил адаптацию! Оценка: {rating}/5"
     await bot.send_message(chat_id=ADMIN_ID, text=report)
     
-    cert = generate_certificate(user['name'], user.get('day', 0), rating)
-    await callback.message.answer_document(
-        types.BufferedInputFile(cert.getvalue(), filename="certificate.png"),
-        caption="🎓 Сертификат!"
-    )
+    # Генерируем сертификат, если Pillow доступна
+    if PILLOW_AVAILABLE:
+        cert = generate_certificate(user['name'], user.get('day', 0), rating)
+        if cert:
+            await callback.message.answer_document(
+                types.BufferedInputFile(cert.getvalue(), filename="certificate.png"),
+                caption="🎓 Сертификат!"
+            )
     
     await callback.message.delete()
     await callback.message.answer(f"🎉 Спасибо, {user['name']}!", reply_markup=main_menu_keyboard(user_id))
@@ -496,12 +527,16 @@ async def handle_faq_callback(callback: types.CallbackQuery):
     await callback.message.answer("🔙 Назад:", reply_markup=back_to_faq_keyboard())
     await callback.answer()
 
-# ========== ОБРАБОТЧИК ТЕКСТА ==========
+# ========== ОБРАБОТЧИК ЛЮБЫХ ТЕКСТОВ ==========
 
 @dp.message()
 async def handle_any_text(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
+    
+    if message.text and message.text.startswith('/'):
+        await message.answer("❌ Неизвестная команда. Используй /help для списка команд.")
+        return
     
     if not user:
         user = {"name": message.text.strip(), "day": 0, "start_date": datetime.now().isoformat()}
@@ -517,6 +552,7 @@ async def main():
     print("🤖 Бот Onboard AI запущен!")
     print("✅ Все функции активны!")
     print(f"👤 Администратор: {ADMIN_ID}")
+    print(f"📦 Pillow доступна: {PILLOW_AVAILABLE}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
