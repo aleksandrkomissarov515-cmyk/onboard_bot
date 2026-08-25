@@ -1,10 +1,14 @@
 import os
 import asyncio
+import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
+
+# Включаем логирование, чтобы видеть ошибки
+logging.basicConfig(level=logging.INFO)
 
 # Загружаем токен
 load_dotenv()
@@ -16,6 +20,7 @@ dp = Dispatcher()
 # ========== КЛАВИАТУРЫ (КНОПКИ) ==========
 
 def main_menu_keyboard():
+    """Главное меню с кнопками"""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🗺️ План адаптации", callback_data="guide"),
@@ -31,20 +36,38 @@ def main_menu_keyboard():
     return builder.as_markup()
 
 def days_keyboard():
+    """Клавиатура с днями 1-7"""
     builder = InlineKeyboardBuilder()
-    buttons = []
     for i in range(1, 8):
-        buttons.append(InlineKeyboardButton(text=f"День {i}", callback_data=f"day_{i}"))
-    builder.add(*buttons)
-    builder.adjust(4)
+        builder.add(InlineKeyboardButton(text=f"📅 День {i}", callback_data=f"day_{i}"))
+    builder.adjust(4)  # 4 кнопки в ряд
     return builder.as_markup()
 
 def faq_keyboard():
+    """Клавиатура с вопросами 1-5"""
     builder = InlineKeyboardBuilder()
     for i in range(1, 6):
-        builder.add(InlineKeyboardButton(text=f"Вопрос {i}", callback_data=f"faq_{i}"))
+        builder.add(InlineKeyboardButton(text=f"❓ Вопрос {i}", callback_data=f"faq_{i}"))
     builder.adjust(3)
     return builder.as_markup()
+
+def back_to_guide_keyboard():
+    """Кнопка 'Назад к плану'"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к плану", callback_data="guide")]
+    ])
+
+def back_to_faq_keyboard():
+    """Кнопка 'Назад к FAQ'"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к FAQ", callback_data="faq")]
+    ])
+
+def back_to_menu_keyboard():
+    """Кнопка 'В главное меню'"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 В главное меню", callback_data="menu")]
+    ])
 
 # ========== КОМАНДА /start ==========
 @dp.message(CommandStart())
@@ -61,121 +84,289 @@ async def start_command(message: Message):
 # ========== КОМАНДА /help ==========
 @dp.message(Command("help"))
 async def help_command(message: Message):
-    help_text = "📋 Список команд:\n/start — главное меню\n/guide — план адаптации\n/faq — частые вопросы\n/contacts — контакты команды\n/resources — полезные ссылки"
+    help_text = """
+📋 Список команд:
+
+/start — главное меню
+/guide — план адаптации
+/faq — частые вопросы
+/contacts — контакты команды
+/resources — полезные ссылки
+"""
     await message.answer(help_text, reply_markup=main_menu_keyboard())
 
 # ========== КОМАНДА /guide ==========
 @dp.message(Command("guide"))
 async def guide_command(message: Message):
-    guide_text = "🗺️ Твой план адаптации на 7 дней:\n\nВыбери день, чтобы узнать подробности:"
+    guide_text = """
+🗺️ Твой план адаптации на 7 дней:
+
+Выбери день, чтобы узнать подробности:
+"""
     await message.answer(guide_text, reply_markup=days_keyboard())
 
 # ========== КОМАНДА /faq ==========
 @dp.message(Command("faq"))
 async def faq_command(message: Message):
-    faq_text = "❓ Частые вопросы:\n\nВыбери номер вопроса:"
+    faq_text = """
+❓ Частые вопросы:
+
+Выбери номер вопроса:
+"""
     await message.answer(faq_text, reply_markup=faq_keyboard())
 
 # ========== КОМАНДА /contacts ==========
 @dp.message(Command("contacts"))
 async def contacts_command(message: Message):
-    contacts_text = "👥 Ключевые люди в проекте:\n\n🟢 Руководитель проекта — @username\n🟡 Тимлид — @username\n🔵 Ментор — @username\n🟣 DevOps — @username"
-    await message.answer(contacts_text, reply_markup=main_menu_keyboard())
+    contacts_text = """
+👥 Ключевые люди в проекте:
+
+🟢 Руководитель проекта — @username
+🟡 Тимлид — @username
+🔵 Ментор (твой наставник) — @username
+🟣 DevOps — @username
+
+✉️ Общий чат: @chat_username
+"""
+    await message.answer(contacts_text, reply_markup=back_to_menu_keyboard())
 
 # ========== КОМАНДА /resources ==========
 @dp.message(Command("resources"))
 async def resources_command(message: Message):
-    resources_text = "📚 Полезные ресурсы:\n\n📁 Документация — [ссылка]\n📊 Доска задач — [ссылка]\n💬 Чат команды — [ссылка]\n📅 Календарь — [ссылка]"
-    await message.answer(resources_text, reply_markup=main_menu_keyboard())
+    resources_text = """
+📚 Полезные ресурсы:
 
-# ========== ОБРАБОТЧИКИ КНОПОК ==========
+📁 Документация — [ссылка]
+📊 Доска задач (Jira) — [ссылка]
+💬 Чат команды — [ссылка]
+📅 Календарь встреч — [ссылка]
+🔐 Запрос доступов — [ссылка]
+"""
+    await message.answer(resources_text, reply_markup=back_to_menu_keyboard())
+
+# ========== ОБРАБОТЧИКИ КНОПОК (callback) ==========
+
+@dp.callback_query(lambda c: c.data == "menu")
+async def handle_menu_callback(callback: types.CallbackQuery):
+    """Возврат в главное меню"""
+    await callback.message.delete()
+    welcome_text = """
+👋 Привет! Я — Onboard AI, твой цифровой наставник.
+
+🔥 Используй кнопки ниже, чтобы узнать больше!
+"""
+    await callback.message.answer(welcome_text, reply_markup=main_menu_keyboard())
+    await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "guide")
 async def handle_guide_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'План адаптации'"""
     await callback.message.delete()
-    guide_text = "🗺️ Твой план адаптации на 7 дней:\n\nВыбери день, чтобы узнать подробности:"
+    guide_text = """
+🗺️ Твой план адаптации на 7 дней:
+
+Выбери день, чтобы узнать подробности:
+"""
     await callback.message.answer(guide_text, reply_markup=days_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "faq")
 async def handle_faq_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'FAQ'"""
     await callback.message.delete()
-    faq_text = "❓ Частые вопросы:\n\nВыбери номер вопроса:"
+    faq_text = """
+❓ Частые вопросы:
+
+Выбери номер вопроса:
+"""
     await callback.message.answer(faq_text, reply_markup=faq_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "contacts")
 async def handle_contacts_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Контакты'"""
     await callback.message.delete()
-    contacts_text = "👥 Ключевые люди в проекте:\n\n🟢 Руководитель проекта — @username\n🟡 Тимлид — @username\n🔵 Ментор — @username\n🟣 DevOps — @username"
-    await callback.message.answer(contacts_text, reply_markup=main_menu_keyboard())
+    contacts_text = """
+👥 Ключевые люди в проекте:
+
+🟢 Руководитель проекта — @username
+🟡 Тимлид — @username
+🔵 Ментор (твой наставник) — @username
+🟣 DevOps — @username
+
+✉️ Общий чат: @chat_username
+"""
+    await callback.message.answer(contacts_text, reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "resources")
 async def handle_resources_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Ресурсы'"""
     await callback.message.delete()
-    resources_text = "📚 Полезные ресурсы:\n\n📁 Документация — [ссылка]\n📊 Доска задач — [ссылка]\n💬 Чат команды — [ссылка]\n📅 Календарь — [ссылка]"
-    await callback.message.answer(resources_text, reply_markup=main_menu_keyboard())
+    resources_text = """
+📚 Полезные ресурсы:
+
+📁 Документация — [ссылка]
+📊 Доска задач (Jira) — [ссылка]
+💬 Чат команды — [ссылка]
+📅 Календарь встреч — [ссылка]
+🔐 Запрос доступов — [ссылка]
+"""
+    await callback.message.answer(resources_text, reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "help")
 async def handle_help_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Помощь'"""
     await callback.message.delete()
-    help_text = "📋 Список команд:\n/start — главное меню\n/guide — план адаптации\n/faq — частые вопросы\n/contacts — контакты команды\n/resources — полезные ссылки"
-    await callback.message.answer(help_text, reply_markup=main_menu_keyboard())
+    help_text = """
+📋 Список команд:
+
+/start — главное меню
+/guide — план адаптации
+/faq — частые вопросы
+/contacts — контакты команды
+/resources — полезные ссылки
+"""
+    await callback.message.answer(help_text, reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
-# ========== ДНИ ==========
+# ========== ОТВЕТЫ НА ДНИ (1-7) ==========
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("day_"))
 async def handle_day_callback(callback: types.CallbackQuery):
+    """Обработчик нажатия на день (1-7)"""
     day_num = callback.data.split("_")[1]
     
     days_info = {
-        "1": "📅 День 1: Знакомство с командой и доступы\n\n✅ Познакомиться с командой\n✅ Получить доступы к системам\n✅ Установить ПО\n✅ Задать вопросы наставнику",
-        "2": "📅 День 2: Обзор проекта\n\n✅ Изучить цели и задачи\n✅ Понять свою роль\n✅ Посмотреть текущий статус\n✅ Изучить метрики",
-        "3": "📅 День 3: Инструменты и технологии\n\n✅ Изучить стек технологий\n✅ Настроить локальное окружение\n✅ Запустить проект локально",
-        "4": "📅 День 4: Рабочие процессы\n\n✅ Как планируем задачи\n✅ Как делаем код-ревью\n✅ Как тестируем\n✅ Как деплоим",
-        "5": "📅 День 5: Первая задача\n\n✅ Взять небольшую задачу\n✅ Выполнить её\n✅ Отправить на проверку",
-        "6": "📅 День 6: Обратная связь\n\n✅ Обсудить впечатления\n✅ Задать вопросы\n✅ Получить обратную связь",
-        "7": "📅 День 7: Итоги\n\n✅ Подвести итоги недели\n✅ Обсудить план\n✅ Чувствовать себя уверенно 💪"
+        "1": """
+📅 **День 1: Знакомство с командой и доступы**
+
+✅ Познакомиться с командой в общем чате
+✅ Получить доступы ко всем системам
+✅ Установить необходимое ПО
+✅ Задать вопросы наставнику
+""",
+        "2": """
+📅 **День 2: Обзор проекта**
+
+✅ Изучить цели и задачи проекта
+✅ Понять свою роль в команде
+✅ Посмотреть текущий статус проекта
+✅ Изучить ключевые метрики
+""",
+        "3": """
+📅 **День 3: Инструменты и технологии**
+
+✅ Изучить стек технологий проекта
+✅ Настроить локальное окружение
+✅ Запустить проект локально
+✅ Посмотреть примеры кода
+""",
+        "4": """
+📅 **День 4: Рабочие процессы**
+
+✅ Как мы планируем задачи
+✅ Как проходят код-ревью
+✅ Как мы тестируем
+✅ Как происходит деплой
+✅ График встреч и созвонов
+""",
+        "5": """
+📅 **День 5: Первая практическая задача**
+
+✅ Взять небольшую задачу
+✅ Самостоятельно выполнить её
+✅ Задать вопросы, если непонятно
+✅ Отправить результат на проверку
+""",
+        "6": """
+📅 **День 6: Обратная связь и вопросы**
+
+✅ Обсудить первые впечатления
+✅ Задать все накопившиеся вопросы
+✅ Получить обратную связь по задачам
+✅ Узнать, что можно улучшить
+""",
+        "7": """
+📅 **День 7: Итоги первой недели**
+
+✅ Подвести итоги недели
+✅ Обсудить план на следующую неделю
+✅ Убедиться, что все доступы работают
+✅ Чувствовать себя уверенно в проекте 💪
+"""
     }
     
     await callback.message.delete()
-    await callback.message.answer(days_info.get(day_num, "День не найден"))
-    
-    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад к плану", callback_data="guide")]
-    ])
-    await callback.message.answer("Выбери действие:", reply_markup=back_keyboard)
+    await callback.message.answer(days_info.get(day_num, "❌ День не найден"))
+    await callback.message.answer("🔙 Вернуться к плану:", reply_markup=back_to_guide_keyboard())
     await callback.answer()
 
-# ========== FAQ ==========
+# ========== ОТВЕТЫ НА FAQ (1-5) ==========
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("faq_"))
 async def handle_faq_callback(callback: types.CallbackQuery):
+    """Обработчик нажатия на вопрос FAQ (1-5)"""
     faq_num = callback.data.split("_")[1]
     
     faq_info = {
-        "1": "❓ Где взять доступы?\n\nОбратись к наставнику или тимлиду.\nИли напиши в общий чат.",
-        "2": "❓ Как настроить окружение?\n\nВсё описано в документации:\n[ссылка]\n\nЕсли что — попроси помощи у DevOps.",
-        "3": "❓ Кто мой наставник?\n\nТвой наставник — @mentor_username\nНе стесняйся спрашивать!",
-        "4": "❓ Где хранятся документы?\n\nВсе документы в Notion/Confluence:\n[ссылка]",
-        "5": "❓ Когда встречи?\n\nDaily в 10:00 по Москве.\nСсылка: [ссылка]"
+        "1": """
+❓ **Вопрос 1: Где взять доступы?**
+
+Обратись к своему наставнику или тимлиду.
+Они выдадут все необходимые доступы в первый же день.
+
+Или напиши в общий чат: @chat_username
+""",
+        "2": """
+❓ **Вопрос 2: Как настроить рабочее окружение?**
+
+Всё подробно описано в документации:
+[ссылка на гайд по настройке]
+
+Если что-то пошло не так — попроси помощи у DevOps или наставника.
+""",
+        "3": """
+❓ **Вопрос 3: Кто мой наставник?**
+
+Твой наставник — @mentor_username
+
+Он поможет тебе с любыми вопросами в первые недели. Не стесняйся спрашивать!
+""",
+        "4": """
+❓ **Вопрос 4: Где хранятся документы?**
+
+Все документы в Notion / Confluence:
+[ссылка на базу знаний]
+
+Там есть:
+• Описание проекта
+• Техническая документация
+• Дизайн-макеты
+• Описание процессов
+""",
+        "5": """
+❓ **Вопрос 5: Когда и как проходят встречи?**
+
+Ежедневные встречи (daily) проходят в 10:00 по Москве.
+
+Ссылка на Zoom / Google Meet:
+[ссылка]
+
+Приходи подготовленным — расскажи, что сделал вчера и что планируешь сегодня.
+"""
     }
     
     await callback.message.delete()
-    await callback.message.answer(faq_info.get(faq_num, "Вопрос не найден"))
-    
-    back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад к FAQ", callback_data="faq")]
-    ])
-    await callback.message.answer("Выбери действие:", reply_markup=back_keyboard)
+    await callback.message.answer(faq_info.get(faq_num, "❌ Вопрос не найден"))
+    await callback.message.answer("🔙 Вернуться к FAQ:", reply_markup=back_to_faq_keyboard())
     await callback.answer()
 
-# ========== ЗАПУСК ==========
+# ========== ЗАПУСК БОТА ==========
 async def main():
     print("🤖 Бот Onboard AI с кнопками запущен!")
+    print("✅ Бот готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
