@@ -19,12 +19,12 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ========== ХРАНИЛИЩЕ ДАННЫХ ==========
-user_data = {}  # {user_id: {"name": str, "day": int, "quiz": bool, "survey": bool}}
+user_data = {}
 
 # ID чата для отчётов (ЗАМЕНИТЕ НА РЕАЛЬНЫЙ)
 REPORT_CHAT_ID = -1001234567890
 
-# ========== ГЛАВНОЕ МЕНЮ ==========
+# ========== КЛАВИАТУРЫ ==========
 
 def main_menu_keyboard():
     builder = InlineKeyboardBuilder()
@@ -122,7 +122,6 @@ async def handle_any_text(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
     
-    # Если имя ещё не введено — сохраняем
     if not user["name"]:
         user["name"] = message.text.strip()
         welcome_text = f"""
@@ -135,7 +134,6 @@ async def handle_any_text(message: Message):
         await message.answer(welcome_text, reply_markup=main_menu_keyboard())
         return
     
-    # Если имя уже есть — отправляем в главное меню
     await message.answer(
         f"😊 {user['name']}, я работаю только по кнопкам!\n\nИспользуй меню ниже 👇",
         reply_markup=main_menu_keyboard()
@@ -420,42 +418,11 @@ async def handle_faq_callback(callback: types.CallbackQuery):
     await callback.message.answer("🔙 Назад:", reply_markup=back_to_faq_keyboard())
     await callback.answer()
 
-# ========== ЕЖЕДНЕВНЫЕ НАПОМИНАНИЯ ==========
-
-async def send_daily_reminders():
-    """Функция для ежедневных напоминаний"""
-    while True:
-        now = datetime.now()
-        if now.hour == 9 and now.minute == 0:
-            for user_id, data in user_data.items():
-                if data.get("name") and data.get("day", 0) < 7:
-                    day = data["day"] + 1
-                    try:
-                        await bot.send_message(
-                            chat_id=user_id,
-                            text=f"""
-🌅 Доброе утро, {data['name']}!
-
-Сегодня — **День {day}** адаптации.
-
-{get_progress_bar(data['day'])}
-🎯 Нажми "План адаптации" и выбери день, чтобы узнать задачи.
-"""
-                        )
-                    except:
-                        pass
-            await asyncio.sleep(60)
-        await asyncio.sleep(60)
-
 # ========== ЗАПУСК ==========
 
 async def main():
     print("🤖 Бот Onboard AI запущен!")
     print("✅ Все функции активны!")
-    
-    # Запускаем ежедневные напоминания в фоне
-    asyncio.create_task(send_daily_reminders())
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
