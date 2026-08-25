@@ -7,7 +7,7 @@ from datetime import datetime
 from io import BytesIO, StringIO
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
@@ -227,7 +227,7 @@ async def start_command(message: Message):
 """
     await message.answer(welcome_text, reply_markup=main_menu_keyboard(user_id))
 
-# ========== КОМАНДА /admin (ИСПРАВЛЕНА) ==========
+# ========== КОМАНДА /admin (ОБРАБОТЧИК ДОБАВЛЕН) ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
     user_id = message.from_user.id
@@ -514,7 +514,9 @@ async def handle_any_text(message: Message):
 # ========== ЗАПУСК ==========
 
 async def main():
-    print("🤖 Бот запущен!")
+    print("🤖 Бот Onboard AI запущен!")
+    print("✅ Все функции активны!")
+    print(f"👤 Администратор: {ADMIN_ID}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
