@@ -141,7 +141,7 @@ def sync_to_google_sheets():
 
 # ========== КЛАВИАТУРЫ ==========
 
-def main_menu_keyboard():
+def main_menu_keyboard(user_id=None):
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🗺️ План адаптации", callback_data="guide"),
@@ -158,6 +158,13 @@ def main_menu_keyboard():
     builder.row(
         InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile")
     )
+    
+    # Если пользователь — админ, добавляем кнопку админ-панели
+    if user_id == ADMIN_ID:
+        builder.row(
+            InlineKeyboardButton(text="🔐 Админ-панель", callback_data="admin_panel")
+        )
+    
     return builder.as_markup()
 
 def admin_menu_keyboard():
@@ -256,6 +263,31 @@ def generate_certificate(name, days, rating):
     img_bytes.seek(0)
     return img_bytes
 
+async def check_inactive_users():
+    """Проверяет неактивных пользователей и напоминает им"""
+    while True:
+        await asyncio.sleep(3600)  # Проверяем каждый час
+        users = get_all_users()
+        now = datetime.now()
+        for u in users:
+            if not u[4] and u[7]:  # Не завершили и есть активность
+                last_active = datetime.fromisoformat(u[7])
+                diff = now - last_active
+                if diff.days >= 2:  # 2 дня неактивности
+                    try:
+                        await bot.send_message(
+                            chat_id=int(u[0]),
+                            text=f"👋 {u[1]}, ты давно не заходил!\n\nЧто у тебя? Нужна помощь?\n\nНажми на кнопку ниже, чтобы продолжить адаптацию:",
+                            reply_markup=main_menu_keyboard(int(u[0]))
+                        )
+                        # Обновляем время, чтобы не спамить
+                        user_data = get_user_data(u[0])
+                        if user_data:
+                            user_data["last_activity"] = now.isoformat()
+                            save_user_data(u[0], user_data)
+                    except:
+                        pass
+
 # ========== КОМАНДА /start ==========
 @dp.message(CommandStart())
 async def start_command(message: Message):
@@ -279,11 +311,11 @@ async def start_command(message: Message):
     
     try:
         video = FSInputFile("welcome.mp4")
-        await message.answer_video(video, caption=welcome_text, reply_markup=main_menu_keyboard())
+        await message.answer_video(video, caption=welcome_text, reply_markup=main_menu_keyboard(user_id))
     except:
-        await message.answer(welcome_text, reply_markup=main_menu_keyboard())
+        await message.answer(welcome_text, reply_markup=main_menu_keyboard(user_id))
 
-# ========== КОМАНДА /admin (ИСПРАВЛЕНА) ==========
+# ========== КОМАНДА /admin ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
     user_id = message.from_user.id
@@ -377,7 +409,23 @@ async def handle_menu(callback: types.CallbackQuery):
     else:
         text = f"🏠 Главное меню, {user['name']}!\n\n{get_progress_bar(user.get('day', 0))}"
     
-    await callback.message.answer(text, reply_markup=main_menu_keyboard())
+    await callback.message.answer(text, reply_markup=main_menu_keyboard(user_id))
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "admin_panel")
+async def handle_admin_panel(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    if not is_admin(user_id):
+        await callback.answer("⛔ У вас нет доступа к админ-панели.")
+        return
+    
+    await callback.message.delete()
+    await callback.message.answer(
+        "🔐 **Админ-панель**\n\nВыберите действие:",
+        parse_mode="Markdown",
+        reply_markup=admin_menu_keyboard()
+    )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "profile")
@@ -451,82 +499,6 @@ async def admin_users_callback(callback: types.CallbackQuery):
         text += f"{status} {name} — День {u[2]}/7\n"
     await callback.message.answer(text, parse_mode="Markdown")
     await callback.answer()
-
-# ========== ОСТАЛЬНЫЕ КОМАНДЫ (guide, faq, contacts, resources, help, mentor) ==========
-
-@dp.message(Command("guide"))
-async def guide_command(message: Message):
-    user_id = message.from_user.id
-    user = get_user_data(user_id)
-    
-    if not user:
-        await message.answer(
-            "👋 Привет! Для начала давай познакомимся.\n\n"
-            "Напиши своё имя, и мы начнём адаптацию! 🚀"
-        )
-        return
-    
-    await message.answer(
-        f"🗺️ {user['name']}, выбери день:",
-        reply_markup=days_keyboard()
-    )
-
-@dp.message(Command("faq"))
-async def faq_command(message: Message):
-    await message.answer("❓ Выбери вопрос:", reply_markup=faq_keyboard())
-
-@dp.message(Command("contacts"))
-async def contacts_command(message: Message):
-    contacts_text = """
-👥 Ключевые люди:
-
-🟢 Руководитель — @username
-🟡 Тимлид — @username
-🔵 Ментор — @username
-🟣 DevOps — @username
-"""
-    await message.answer(contacts_text, reply_markup=back_to_menu_keyboard())
-
-@dp.message(Command("resources"))
-async def resources_command(message: Message):
-    resources_text = """
-📚 Ресурсы:
-
-📁 Документация — [ссылка]
-📊 Jira — [ссылка]
-💬 Чат — [ссылка]
-"""
-    await message.answer(resources_text, reply_markup=back_to_menu_keyboard())
-
-@dp.message(Command("help"))
-async def help_command(message: Message):
-    help_text = """
-📋 Доступные команды:
-
-/start — главное меню
-/guide — план адаптации
-/faq — частые вопросы
-/contacts — контакты команды
-/resources — полезные ресурсы
-/profile — мой профиль
-/admin — админ-панель (только для админа)
-"""
-    await message.answer(help_text, reply_markup=back_to_menu_keyboard())
-
-@dp.message(Command("mentor"))
-async def mentor_command(message: Message):
-    mentor_text = """
-🆘 Нужна помощь?
-
-Можешь связаться с ментором напрямую:
-@mentor_username
-
-Или напиши в общий чат:
-@chat_username
-
-Ты не один! 💪
-"""
-    await message.answer(mentor_text, reply_markup=back_to_menu_keyboard())
 
 # ========== ДНИ С ВИКТОРИНОЙ ==========
 
@@ -708,7 +680,149 @@ async def handle_survey(callback: types.CallbackQuery):
 
 Ты прошёл полный курс адаптации! 🎉
 Сертификат отправлен выше.
-""", reply_markup=main_menu_keyboard())
+""", reply_markup=main_menu_keyboard(user_id))
+    await callback.answer()
+
+# ========== ОБРАБОТЧИКИ КНОПОК (guide, faq, mentor, contacts, resources, help) ==========
+
+@dp.callback_query(lambda c: c.data == "guide")
+async def handle_guide(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и мы начнём адаптацию! 🚀"
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.delete()
+    await callback.message.answer(
+        f"🗺️ {user['name']}, выбери день:",
+        reply_markup=days_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "faq")
+async def handle_faq(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и я отвечу на все вопросы! 🚀"
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.delete()
+    await callback.message.answer("❓ Выбери вопрос:", reply_markup=faq_keyboard())
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "mentor")
+async def handle_mentor(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    
+    await callback.message.delete()
+    
+    if not user:
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и я свяжу тебя с ментором! 🆘"
+        )
+        await callback.answer()
+        return
+    
+    mentor_text = f"""
+🆘 {user['name']}, не переживай! Я помогу тебе.
+
+Можешь связаться с ментором напрямую:
+@mentor_username
+
+Или напиши в общий чат:
+@chat_username
+
+Ты не один! 💪
+"""
+    await callback.message.answer(mentor_text, reply_markup=back_to_menu_keyboard())
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "contacts")
+async def handle_contacts(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и я покажу контакты команды! 👥"
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.delete()
+    contacts_text = """
+👥 Ключевые люди:
+
+🟢 Руководитель — @username
+🟡 Тимлид — @username
+🔵 Ментор — @username
+🟣 DevOps — @username
+"""
+    await callback.message.answer(contacts_text, reply_markup=back_to_menu_keyboard())
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "resources")
+async def handle_resources(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и я покажу все полезные ресурсы! 📚"
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.delete()
+    resources_text = """
+📚 Ресурсы:
+
+📁 Документация — [ссылка]
+📊 Jira — [ссылка]
+💬 Чат — [ссылка]
+"""
+    await callback.message.answer(resources_text, reply_markup=back_to_menu_keyboard())
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "help")
+async def handle_help(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = get_user_data(user_id)
+    
+    if not user:
+        await callback.message.delete()
+        await callback.message.answer(
+            "👋 Привет! Для начала давай познакомимся.\n\n"
+            "Напиши своё имя, и я покажу, как работает бот! 📋"
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.delete()
+    await callback.message.answer(
+        "📋 Используй кнопки меню для навигации!",
+        reply_markup=back_to_menu_keyboard()
+    )
     await callback.answer()
 
 # ========== FAQ ==========
@@ -745,12 +859,12 @@ async def handle_any_text(message: Message):
 
 📅 Нажми "План адаптации", чтобы начать!
 """
-        await message.answer(welcome_text, reply_markup=main_menu_keyboard())
+        await message.answer(welcome_text, reply_markup=main_menu_keyboard(user_id))
         return
     
     await message.answer(
         f"😊 {user['name']}, я работаю только по кнопкам!\n\nИспользуй меню ниже 👇",
-        reply_markup=main_menu_keyboard()
+        reply_markup=main_menu_keyboard(user_id)
     )
 
 # ========== ЗАПУСК ==========
