@@ -3,10 +3,11 @@ import asyncio
 import logging
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
+import json
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
@@ -18,11 +19,22 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ========== ХРАНИЛИЩЕ ДАННЫХ ==========
-user_data = {}
+# ========== ID АДМИНИСТРАТОРА ==========
+ADMIN_ID = 470740095  # ВАШ ID
 
-# ID чата для отчётов (ЗАМЕНИТЕ НА РЕАЛЬНЫЙ)
-REPORT_CHAT_ID = -1001234567890
+# ========== ХРАНИЛИЩЕ ДАННЫХ ==========
+DATA_FILE = "users_data.json"
+
+def load_data():
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 # ========== КЛАВИАТУРЫ ==========
 
@@ -97,9 +109,24 @@ def get_progress_bar(day):
     return f"📊 Прогресс: {bar} {percent}%"
 
 def get_user_data(user_id):
-    if user_id not in user_data:
-        user_data[user_id] = {"name": None, "day": 0, "quiz": False, "survey": False}
-    return user_data[user_id]
+    data = load_data()
+    user_id_str = str(user_id)
+    if user_id_str not in data:
+        data[user_id_str] = {
+            "name": None,
+            "day": 0,
+            "survey": False,
+            "rating": None,
+            "completed": False,
+            "start_date": None,
+            "completed_date": None
+        }
+    return data[user_id_str]
+
+def save_user_data(user_id, user_data):
+    data = load_data()
+    data[str(user_id)] = user_data
+    save_data(data)
 
 # ========== КОМАНДА /start ==========
 @dp.message(CommandStart())
@@ -116,14 +143,59 @@ async def start_command(message: Message):
 """
     await message.answer(welcome_text, reply_markup=main_menu_keyboard())
 
+# ========== КОМАНДА /stats (ТОЛЬКО ДЛЯ АДМИНА) ==========
+@dp.message(Command("stats"))
+async def stats_command(message: Message):
+    user_id = message.from_user.id
+    
+    # Проверяем, админ ли это
+    if user_id != ADMIN_ID:
+        await message.answer("⛔ У вас нет доступа к этой команде.")
+        return
+    
+    data = load_data()
+    
+    if not data:
+        await message.answer("📊 Нет данных о сотрудниках.")
+        return
+    
+    total = len(data)
+    completed = sum(1 for u in data.values() if u.get("completed", False))
+    avg_rating = 0
+    ratings = [u.get("rating", 0) for u in data.values() if u.get("rating")]
+    if ratings:
+        avg_rating = round(sum(ratings) / len(ratings), 1)
+    
+    stats_text = f"""
+📊 **Статистика адаптации**
+
+👥 Всего сотрудников: {total}
+✅ Завершили адаптацию: {completed}
+⭐ Средняя оценка уверенности: {avg_rating}/5
+
+📋 **Список сотрудников:**
+"""
+    
+    for user_id, u in data.items():
+        name = u.get("name") or "Без имени"
+        days = u.get("day", 0)
+        status = "✅" if u.get("completed") else "🔄"
+        rating = u.get("rating") or "—"
+        stats_text += f"\n{status} {name} — День {days}/7, Оценка: {rating}/5"
+    
+    await message.answer(stats_text, parse_mode="Markdown")
+
 # ========== ОБРАБОТЧИК ЛЮБЫХ ТЕКСТОВЫХ СООБЩЕНИЙ ==========
 @dp.message()
 async def handle_any_text(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
     
-    if not user["name"]:
+    if not user.get("name"):
         user["name"] = message.text.strip()
+        user["start_date"] = datetime.now().strftime("%d.%m.%Y %H:%M")
+        save_user_data(user_id, user)
+        
         welcome_text = f"""
 🎉 Отлично, {user["name"]}! Я запомнил тебя.
 
@@ -148,10 +220,10 @@ async def handle_menu(callback: types.CallbackQuery):
     
     await callback.message.delete()
     
-    if not user["name"]:
+    if not user.get("name"):
         text = "👋 Давай познакомимся! Напиши своё имя."
     else:
-        text = f"🏠 Главное меню, {user['name']}!\n\n{get_progress_bar(user['day'])}"
+        text = f"🏠 Главное меню, {user['name']}!\n\n{get_progress_bar(user.get('day', 0))}"
     
     await callback.message.answer(text, reply_markup=main_menu_keyboard())
     await callback.answer()
@@ -161,7 +233,7 @@ async def handle_guide(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = get_user_data(user_id)
     
-    if not user["name"]:
+    if not user.get("name"):
         await callback.message.delete()
         await callback.message.answer(
             "👋 Привет! Для начала давай познакомимся.\n\n"
@@ -182,7 +254,7 @@ async def handle_faq(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = get_user_data(user_id)
     
-    if not user["name"]:
+    if not user.get("name"):
         await callback.message.delete()
         await callback.message.answer(
             "👋 Привет! Для начала давай познакомимся.\n\n"
@@ -202,7 +274,7 @@ async def handle_mentor(callback: types.CallbackQuery):
     
     await callback.message.delete()
     
-    if not user["name"]:
+    if not user.get("name"):
         await callback.message.answer(
             "👋 Привет! Для начала давай познакомимся.\n\n"
             "Напиши своё имя, и я свяжу тебя с ментором! 🆘"
@@ -229,7 +301,7 @@ async def handle_contacts(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = get_user_data(user_id)
     
-    if not user["name"]:
+    if not user.get("name"):
         await callback.message.delete()
         await callback.message.answer(
             "👋 Привет! Для начала давай познакомимся.\n\n"
@@ -255,7 +327,7 @@ async def handle_resources(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = get_user_data(user_id)
     
-    if not user["name"]:
+    if not user.get("name"):
         await callback.message.delete()
         await callback.message.answer(
             "👋 Привет! Для начала давай познакомимся.\n\n"
@@ -280,7 +352,7 @@ async def handle_help(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = get_user_data(user_id)
     
-    if not user["name"]:
+    if not user.get("name"):
         await callback.message.delete()
         await callback.message.answer(
             "👋 Привет! Для начала давай познакомимся.\n\n"
@@ -304,7 +376,8 @@ async def handle_day(callback: types.CallbackQuery):
     user = get_user_data(user_id)
     day_num = int(callback.data.split("_")[1])
     
-    user["day"] = max(user["day"], day_num)
+    user["day"] = max(user.get("day", 0), day_num)
+    save_user_data(user_id, user)
     
     days_info = {
         1: "📅 **День 1: Знакомство**\n\n✅ Познакомиться с командой\n✅ Получить доступы\n✅ Установить ПО",
@@ -318,7 +391,7 @@ async def handle_day(callback: types.CallbackQuery):
     
     await callback.message.delete()
     await callback.message.answer(days_info.get(day_num, "❌ День не найден"), parse_mode="Markdown")
-    await callback.message.answer(f"{get_progress_bar(user['day'])}")
+    await callback.message.answer(f"{get_progress_bar(user.get('day', 0))}")
     
     if day_num < 7:
         await callback.message.answer("🧠 **Викторина:** Ответь на вопрос!", parse_mode="Markdown")
@@ -375,21 +448,24 @@ async def handle_survey(callback: types.CallbackQuery):
     user = get_user_data(user_id)
     rating = int(callback.data.split("_")[1])
     
-    user["survey"] = True
+    user["rating"] = rating
+    user["completed"] = True
+    user["completed_date"] = datetime.now().strftime("%d.%m.%Y %H:%M")
+    save_user_data(user_id, user)
     
     report = f"""
 📊 **Отчёт об адаптации**
 
 👤 Сотрудник: {user['name']}
-📅 Дней пройдено: {user['day']}/7
+📅 Дней пройдено: {user.get('day', 0)}/7
 ⭐ Оценка уверенности: {rating}/5
-📆 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}
+📆 Дата завершения: {user['completed_date']}
 """
     
     try:
-        await bot.send_message(chat_id=REPORT_CHAT_ID, text=report, parse_mode="Markdown")
+        await bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
     except:
-        print("❌ Не удалось отправить отчёт в чат")
+        print("❌ Не удалось отправить отчёт админу")
     
     await callback.message.delete()
     await callback.message.answer(f"""
@@ -423,6 +499,7 @@ async def handle_faq_callback(callback: types.CallbackQuery):
 async def main():
     print("🤖 Бот Onboard AI запущен!")
     print("✅ Все функции активны!")
+    print(f"👤 Администратор: {ADMIN_ID}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
