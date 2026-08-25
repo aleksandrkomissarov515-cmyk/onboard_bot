@@ -1,27 +1,4 @@
 import os
-import subprocess
-import sys
-
-# ========== АВТОМАТИЧЕСКАЯ УСТАНОВКА ЗАВИСИМОСТЕЙ ==========
-def install_requirements():
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--no-cache-dir"])
-        print("✅ Все зависимости установлены!")
-        return True
-    except Exception as e:
-        print(f"⚠️ Ошибка установки зависимостей: {e}")
-        return False
-
-# Проверяем и устанавливаем зависимости при первом запуске
-if not os.path.exists(".deps_installed"):
-    print("📦 Устанавливаю зависимости...")
-    if install_requirements():
-        with open(".deps_installed", "w") as f:
-            f.write("installed")
-    else:
-        print("❌ Не удалось установить зависимости. Проверьте requirements.txt")
-
-# ========== ОСНОВНЫЕ ИМПОРТЫ ==========
 import asyncio
 import logging
 import sqlite3
@@ -34,24 +11,12 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
-# Пытаемся импортировать Pillow (если не установлена — будет ошибка, но мы уже установили)
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    PILLOW_AVAILABLE = True
-except ImportError:
-    PILLOW_AVAILABLE = False
-    print("⚠️ Pillow не установлена. Функция сертификатов будет недоступна.")
-
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
 
 # Загружаем токен
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-if not BOT_TOKEN:
-    print("❌ ОШИБКА: Токен не найден! Проверьте файл .env")
-    sys.exit(1)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -128,6 +93,27 @@ def get_all_users():
     conn.close()
     return rows
 
+# ========== GOOGLE SHEETS ==========
+def sync_to_google_sheets():
+    """Отправляет данные в Google Sheets (заглушка)"""
+    try:
+        users = get_all_users()
+        if not users:
+            return "📊 Нет данных для синхронизации."
+        
+        # Формируем CSV-файл
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала", "Дата завершения"])
+        for u in users:
+            writer.writerow(list(u))
+        
+        # Здесь будет код для отправки в Google Sheets
+        # Пока просто возвращаем сообщение
+        return f"✅ Данные готовы к синхронизации! ({len(users)} записей)"
+    except Exception as e:
+        return f"❌ Ошибка синхронизации: {e}"
+
 # ========== КЛАВИАТУРЫ ==========
 
 def main_menu_keyboard(user_id=None):
@@ -157,6 +143,7 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📥 Экспорт Excel", callback_data="admin_export")],
+        [InlineKeyboardButton(text="🔄 Синхронизация Google Sheets", callback_data="admin_sync")],
         [InlineKeyboardButton(text="📋 Список сотрудников", callback_data="admin_users")]
     ])
 
@@ -219,33 +206,7 @@ def get_progress_bar(day):
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
-def generate_certificate(name, days, rating):
-    if not PILLOW_AVAILABLE:
-        return None
-    
-    img = Image.new('RGB', (800, 600), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("arial.ttf", 40)
-        font_small = ImageFont.truetype("arial.ttf", 24)
-    except:
-        font = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    
-    draw.text((200, 100), "СЕРТИФИКАТ", fill=(0, 0, 0), font=font)
-    draw.text((100, 200), f"Настоящий сертификат подтверждает, что", fill=(0, 0, 0), font=font_small)
-    draw.text((100, 250), f"{name}", fill=(0, 0, 255), font=font)
-    draw.text((100, 320), f"успешно прошёл адаптацию в проекте!", fill=(0, 0, 0), font=font_small)
-    draw.text((100, 370), f"Дней: {days}/7 | Оценка уверенности: {rating}/5", fill=(0, 0, 0), font=font_small)
-    draw.text((100, 420), f"Дата: {datetime.now().strftime('%d.%m.%Y')}", fill=(0, 0, 0), font=font_small)
-    
-    img_bytes = BytesIO()
-    img.save(img_bytes, format='PNG')
-    img_bytes.seek(0)
-    return img_bytes
-
-# ========== КОМАНДЫ ==========
-
+# ========== КОМАНДА /start ==========
 @dp.message(CommandStart())
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -265,6 +226,7 @@ async def start_command(message: Message):
 """
     await message.answer(welcome_text, reply_markup=main_menu_keyboard(user_id))
 
+# ========== КОМАНДА /admin ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
     user_id = message.from_user.id
@@ -279,6 +241,7 @@ async def admin_panel(message: Message):
         reply_markup=admin_menu_keyboard()
     )
 
+# ========== КОМАНДА /stats ==========
 @dp.message(Command("stats"))
 async def stats_command(message: Message):
     user_id = message.from_user.id
@@ -296,6 +259,7 @@ async def stats_command(message: Message):
         text += f"{status} {name} — День {u[2]}/7\n"
     await message.answer(text, parse_mode="Markdown")
 
+# ========== КОМАНДА /export ==========
 @dp.message(Command("export"))
 async def export_command(message: Message):
     user_id = message.from_user.id
@@ -359,6 +323,8 @@ async def handle_profile(callback: types.CallbackQuery):
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=back_to_menu_keyboard())
     await callback.answer()
 
+# ========== АДМИН-КНОПКИ ==========
+
 @dp.callback_query(lambda c: c.data == "admin_stats")
 async def admin_stats_callback(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -373,6 +339,15 @@ async def admin_export_callback(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа")
         return
     await export_command(callback.message)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "admin_sync")
+async def admin_sync_callback(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    result = sync_to_google_sheets()
+    await callback.message.answer(result)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "admin_users")
@@ -497,15 +472,6 @@ async def handle_survey(callback: types.CallbackQuery):
     report = f"📊 {user['name']} завершил адаптацию! Оценка: {rating}/5"
     await bot.send_message(chat_id=ADMIN_ID, text=report)
     
-    # Генерируем сертификат, если Pillow доступна
-    if PILLOW_AVAILABLE:
-        cert = generate_certificate(user['name'], user.get('day', 0), rating)
-        if cert:
-            await callback.message.answer_document(
-                types.BufferedInputFile(cert.getvalue(), filename="certificate.png"),
-                caption="🎓 Сертификат!"
-            )
-    
     await callback.message.delete()
     await callback.message.answer(f"🎉 Спасибо, {user['name']}!", reply_markup=main_menu_keyboard(user_id))
     await callback.answer()
@@ -552,7 +518,6 @@ async def main():
     print("🤖 Бот Onboard AI запущен!")
     print("✅ Все функции активны!")
     print(f"👤 Администратор: {ADMIN_ID}")
-    print(f"📦 Pillow доступна: {PILLOW_AVAILABLE}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
