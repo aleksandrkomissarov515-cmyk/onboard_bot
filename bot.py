@@ -12,7 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
@@ -35,11 +35,18 @@ ADMIN_ID = 470740095
 def init_google_sheets():
     """Подключение к Google Sheets"""
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        if not os.path.exists("credentials.json"):
+            print("❌ Файл credentials.json не найден!")
+            return None
+        
+        creds = Credentials.from_service_account_file(
+            "credentials.json",
+            scopes=["https://www.googleapis.com/auth/spreadsheets", 
+                    "https://www.googleapis.com/auth/drive"]
+        )
         client = gspread.authorize(creds)
-        # Открываем таблицу по имени (должна существовать)
         sheet = client.open("Onboard AI - Статистика").sheet1
+        print("✅ Подключение к Google Sheets установлено!")
         return sheet
     except Exception as e:
         print(f"❌ Ошибка подключения к Google Sheets: {e}")
@@ -56,11 +63,9 @@ def sync_to_google_sheets():
         if not users:
             return "📊 Нет данных для синхронизации."
         
-        # Очищаем таблицу и добавляем заголовки
         sheet.clear()
         sheet.append_row(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала", "Дата завершения"])
         
-        # Добавляем данные
         for u in users:
             sheet.append_row(list(u))
         
@@ -638,7 +643,6 @@ async def handle_quiz_answer(callback: types.CallbackQuery):
     q_num = int(parts[1])
     answer = int(parts[2])
     
-    # Проверка правильности (все правильные ответы = 1 для простоты)
     if answer == 1:
         await callback.message.answer("✅ **Правильно!** 🎉", parse_mode="Markdown")
     else:
@@ -673,7 +677,6 @@ async def handle_survey(callback: types.CallbackQuery):
     
     await bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
     
-    # Генерируем сертификат
     cert = generate_certificate(user['name'], user.get('day', 0), rating)
     if cert:
         await callback.message.answer_document(
@@ -682,7 +685,6 @@ async def handle_survey(callback: types.CallbackQuery):
             parse_mode="Markdown"
         )
     
-    # Автоматическая синхронизация с Google Sheets
     sync_result = sync_to_google_sheets()
     print(f"📊 Результат синхронизации: {sync_result}")
     
