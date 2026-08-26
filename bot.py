@@ -11,6 +11,8 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # Включаем логирование
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +30,43 @@ dp = Dispatcher()
 
 # ========== ID АДМИНИСТРАТОРА ==========
 ADMIN_ID = 470740095
+
+# ========== GOOGLE SHEETS ==========
+def init_google_sheets():
+    """Подключение к Google Sheets"""
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        client = gspread.authorize(creds)
+        # Открываем таблицу по имени (должна существовать)
+        sheet = client.open("Onboard AI - Статистика").sheet1
+        return sheet
+    except Exception as e:
+        print(f"❌ Ошибка подключения к Google Sheets: {e}")
+        return None
+
+def sync_to_google_sheets():
+    """Отправляет все данные в Google Sheets"""
+    try:
+        sheet = init_google_sheets()
+        if not sheet:
+            return "❌ Не удалось подключиться к Google Sheets. Проверьте credentials.json"
+        
+        users = get_all_users()
+        if not users:
+            return "📊 Нет данных для синхронизации."
+        
+        # Очищаем таблицу и добавляем заголовки
+        sheet.clear()
+        sheet.append_row(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала", "Дата завершения"])
+        
+        # Добавляем данные
+        for u in users:
+            sheet.append_row(list(u))
+        
+        return f"✅ Данные синхронизированы с Google Sheets! ({len(users)} записей)"
+    except Exception as e:
+        return f"❌ Ошибка синхронизации: {e}"
 
 # ========== БАЗА ДАННЫХ ==========
 DB_FILE = "onboard.db"
@@ -127,6 +166,7 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📥 Экспорт Excel", callback_data="admin_export")],
+        [InlineKeyboardButton(text="🔄 Синхронизация Google Sheets", callback_data="admin_sync")],
         [InlineKeyboardButton(text="📋 Список сотрудников", callback_data="admin_users")]
     ])
 
@@ -359,6 +399,15 @@ async def admin_export_callback(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа")
         return
     await export_command(callback.message)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "admin_sync")
+async def admin_sync_callback(callback: types.CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    result = sync_to_google_sheets()
+    await callback.message.answer(result)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "admin_users")
@@ -633,6 +682,10 @@ async def handle_survey(callback: types.CallbackQuery):
             parse_mode="Markdown"
         )
     
+    # Автоматическая синхронизация с Google Sheets
+    sync_result = sync_to_google_sheets()
+    print(f"📊 Результат синхронизации: {sync_result}")
+    
     await callback.message.delete()
     await callback.message.answer(f"""
 📊 **Спасибо за обратную связь, {user['name']}!**
@@ -667,7 +720,6 @@ async def handle_any_text(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
     
-    # Если это команда (начинается с /) — игнорируем, чтобы не перехватывать
     if message.text and message.text.startswith('/'):
         await message.answer("❌ Неизвестная команда. Используй /help для списка команд.")
         return
