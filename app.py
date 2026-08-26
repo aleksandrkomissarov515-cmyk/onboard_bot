@@ -5,8 +5,8 @@ import os
 app = Flask(__name__)
 DB_FILE = "onboard.db"
 
+# ========== ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ==========
 def init_db():
-    """Создаёт таблицы, если их нет"""
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
     cur.execute("""
@@ -35,6 +35,7 @@ def init_db():
     conn.close()
     print("✅ База данных инициализирована")
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БАЗОЙ ==========
 def get_all_users():
     conn = sqlite3.connect(DB_FILE)
     cur = conn.cursor()
@@ -65,13 +66,34 @@ def get_stats():
         'users': users
     }
 
+# ========== МАРШРУТЫ (СТРАНИЦЫ) ==========
+
 @app.route('/')
+def home():
+    """Главная страница — сразу показывает дашборд"""
+    try:
+        stats = get_stats()
+        return render_template('dashboard.html', stats=stats)
+    except Exception as e:
+        return f"❌ Ошибка загрузки дашборда: {e}", 500
+
+@app.route('/dashboard')
 def dashboard():
-    stats = get_stats()
-    return render_template('dashboard.html', stats=stats)
+    """Страница дашборда (дублирует главную)"""
+    try:
+        stats = get_stats()
+        return render_template('dashboard.html', stats=stats)
+    except Exception as e:
+        return f"❌ Ошибка загрузки дашборда: {e}", 500
+
+@app.route('/ping')
+def ping():
+    """Проверка, что сервер работает"""
+    return "pong"
 
 @app.route('/api/stats')
 def api_stats():
+    """API: статистика в формате JSON"""
     stats = get_stats()
     return jsonify({
         'total': stats['total'],
@@ -83,6 +105,7 @@ def api_stats():
 
 @app.route('/api/users')
 def api_users():
+    """API: список сотрудников в формате JSON"""
     users = get_all_users()
     return jsonify([{
         'id': u[0],
@@ -94,8 +117,8 @@ def api_users():
         'completed_date': u[6]
     } for u in users])
 
+# ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    # Инициализируем БД при старте
     init_db()
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
