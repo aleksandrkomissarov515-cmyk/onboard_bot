@@ -3,17 +3,33 @@ import asyncio
 import logging
 import sqlite3
 import csv
+import threading
 from datetime import datetime
 from io import BytesIO, StringIO
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFont
 import gspread
 from google.oauth2.service_account import Credentials
 
+# ========== ЗАПУСК ВЕБ-СЕРВЕРА (ДАШБОРДА) В ОТДЕЛЬНОМ ПОТОКЕ ==========
+def run_web_dashboard():
+    """Запускает Flask-дашборд в отдельном потоке"""
+    try:
+        from app import app
+        port = int(os.environ.get('PORT', 5000))
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    except Exception as e:
+        print(f"❌ Ошибка запуска дашборда: {e}")
+
+# Запускаем дашборд в фоновом потоке
+threading.Thread(target=run_web_dashboard, daemon=True).start()
+print("🌐 Веб-дашборд запускается...")
+
+# ========== ОСТАЛЬНОЙ КОД БОТА ==========
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
@@ -55,6 +71,7 @@ def init_db():
     )""")
     conn.commit()
     conn.close()
+    print("✅ База данных инициализирована")
 
 init_db()
 
@@ -283,7 +300,25 @@ async def start_command(message: Message):
     user = get_user_data(user_id)
     if not user:
         await bot.send_message(ADMIN_ID, f"🆕 Новый сотрудник: {message.from_user.first_name}")
-    await message.answer("👋 Привет! Используй кнопки ниже!", reply_markup=main_menu_keyboard(user_id))
+    
+    # Проверяем, есть ли видео
+    video_path = "welcome.mp4"
+    if os.path.exists(video_path):
+        try:
+            video = FSInputFile(video_path)
+            await message.answer_video(
+                video, 
+                caption="👋 Привет! Я — Onboard AI, твой цифровой наставник!\n\nИспользуй кнопки ниже!",
+                reply_markup=main_menu_keyboard(user_id)
+            )
+            return
+        except:
+            pass
+    
+    await message.answer(
+        "👋 Привет! Я — Onboard AI, твой цифровой наставник!\n\nИспользуй кнопки ниже!",
+        reply_markup=main_menu_keyboard(user_id)
+    )
 
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
@@ -576,7 +611,6 @@ async def handle_survey(callback: types.CallbackQuery):
     
     await bot.send_message(ADMIN_ID, f"📊 {user['name']} завершил адаптацию!\nОценка: {rating}/5\nВикторина: {correct}/{total}")
     
-    # ========== ГЕНЕРАЦИЯ СЕРТИФИКАТА ==========
     cert = generate_certificate(user['name'], user.get('day', 0), rating)
     if cert:
         await callback.message.answer_document(
@@ -620,6 +654,7 @@ async def main():
     print("🤖 Бот Onboard AI запущен!")
     print("✅ Все функции активны!")
     print(f"👤 Администратор: {ADMIN_ID}")
+    print("🌐 Веб-дашборд доступен по адресу: {PORT}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
