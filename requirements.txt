@@ -1,1 +1,5 @@
 aiogram
+python-dotenv
+Pillow
+gspread
+oauth2client
