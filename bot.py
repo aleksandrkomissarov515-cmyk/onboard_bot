@@ -15,21 +15,23 @@ from PIL import Image, ImageDraw, ImageFont
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ========== ЗАПУСК ВЕБ-СЕРВЕРА (ДАШБОРДА) В ОТДЕЛЬНОМ ПОТОКЕ ==========
+# ========== ЗАПУСК ВЕБ-СЕРВЕРА (ДАШБОРДА) ==========
 def run_web_dashboard():
-    """Запускает Flask-дашборд в отдельном потоке"""
     try:
         from app import app
-        port = int(os.environ.get('PORT', 8080))
+        port = int(os.environ.get('PORT', 5000))
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         print(f"❌ Ошибка запуска дашборда: {e}")
 
-# Запускаем дашборд в фоновом потоке
-threading.Thread(target=run_web_dashboard, daemon=True).start()
-print("🌐 Веб-дашборд запускается...")
+# Запускаем дашборд в фоновом потоке (если есть app.py)
+try:
+    threading.Thread(target=run_web_dashboard, daemon=True).start()
+    print("🌐 Веб-дашборд запускается...")
+except:
+    pass
 
-# ========== ОСТАЛЬНОЙ КОД БОТА ==========
+# ========== ОСНОВНОЙ КОД БОТА ==========
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
@@ -137,6 +139,8 @@ def get_quiz_stats(user_id):
         return row[0], row[1]
     return 0, 0
 
+# ========== КЛАВИАТУРЫ ==========
+
 def main_menu_keyboard(user_id=None):
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -164,6 +168,7 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="📥 Экспорт Excel", callback_data="admin_export")],
+        [InlineKeyboardButton(text="🔄 Синхронизация Google Sheets", callback_data="admin_sync")],
         [InlineKeyboardButton(text="📋 Список сотрудников", callback_data="admin_users")]
     ])
 
@@ -231,10 +236,11 @@ def get_progress_bar(day):
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
+# ========== GOOGLE SHEETS ==========
 def sync_to_google_sheets():
     try:
         if not os.path.exists("credentials.json"):
-            return "❌ credentials.json не найден"
+            return "❌ credentials.json не найден. Загрузите файл на Railway."
         creds = Credentials.from_service_account_file(
             "credentials.json",
             scopes=["https://www.googleapis.com/auth/spreadsheets", 
@@ -244,15 +250,17 @@ def sync_to_google_sheets():
         sheet = client.open("Onboard AI - Статистика").sheet1
         users = get_all_users()
         if not users:
-            return "📊 Нет данных"
+            return "📊 Нет данных для синхронизации"
         sheet.clear()
         sheet.append_row(["ID", "Имя", "День", "Оценка", "Завершено", "Дата начала", "Дата завершения"])
         for u in users:
-            sheet.append_row(list(u))
+            row = [u[0], u[1] or "—", u[2], u[3] if u[3] else "—", "Да" if u[4] else "Нет", u[5] or "—", u[6] or "—"]
+            sheet.append_row(row)
         return f"✅ Синхронизировано! ({len(users)} записей)"
     except Exception as e:
         return f"❌ Ошибка: {e}"
 
+# ========== ГЕНЕРАЦИЯ СЕРТИФИКАТА ==========
 def generate_certificate(name, days, rating):
     try:
         img = Image.new('RGB', (1400, 900), color=(255, 255, 255))
@@ -261,16 +269,13 @@ def generate_certificate(name, days, rating):
         try:
             font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 70)
             font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40)
-            font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
         except:
             try:
                 font_big = ImageFont.truetype("arial.ttf", 70)
                 font_medium = ImageFont.truetype("arial.ttf", 40)
-                font_small = ImageFont.truetype("arial.ttf", 32)
             except:
                 font_big = ImageFont.load_default()
                 font_medium = ImageFont.load_default()
-                font_small = ImageFont.load_default()
         
         draw.rectangle([20, 20, 1380, 880], outline=(0, 100, 200), width=5)
         draw.rectangle([40, 40, 1360, 860], outline=(0, 100, 200), width=2)
@@ -284,7 +289,6 @@ def generate_certificate(name, days, rating):
         draw.text((700, 500), f"Дней: {days}/7 | Оценка уверенности: {rating}/5", fill=(0, 100, 200), font=font_medium, anchor="mt")
         draw.text((700, 590), f"Дата: {datetime.now().strftime('%d.%m.%Y')}", fill=(100, 100, 100), font=font_medium, anchor="mt")
         draw.text((700, 700), "Onboard AI", fill=(150, 150, 150), font=font_medium, anchor="mt")
-        draw.line([400, 760, 1000, 760], fill=(200, 200, 200), width=2)
         
         img_bytes = BytesIO()
         img.save(img_bytes, format='PNG')
@@ -294,31 +298,15 @@ def generate_certificate(name, days, rating):
         print(f"❌ Ошибка сертификата: {e}")
         return None
 
+# ========== КОМАНДЫ ==========
+
 @dp.message(CommandStart())
 async def start_command(message: Message):
     user_id = message.from_user.id
     user = get_user_data(user_id)
     if not user:
         await bot.send_message(ADMIN_ID, f"🆕 Новый сотрудник: {message.from_user.first_name}")
-    
-    # Проверяем, есть ли видео
-    video_path = "welcome.mp4"
-    if os.path.exists(video_path):
-        try:
-            video = FSInputFile(video_path)
-            await message.answer_video(
-                video, 
-                caption="👋 Привет! Я — Onboard AI, твой цифровой наставник!\n\nИспользуй кнопки ниже!",
-                reply_markup=main_menu_keyboard(user_id)
-            )
-            return
-        except:
-            pass
-    
-    await message.answer(
-        "👋 Привет! Я — Onboard AI, твой цифровой наставник!\n\nИспользуй кнопки ниже!",
-        reply_markup=main_menu_keyboard(user_id)
-    )
+    await message.answer("👋 Привет! Я — Onboard AI, твой цифровой наставник!\n\nИспользуй кнопки ниже!", reply_markup=main_menu_keyboard(user_id))
 
 @dp.message(Command("admin"))
 async def admin_panel(message: Message):
@@ -366,6 +354,8 @@ async def export_command(message: Message):
         caption="📊 Отчёт по адаптации"
     )
 
+# ========== ОБРАБОТЧИКИ КНОПОК ==========
+
 @dp.callback_query(lambda c: c.data == "menu")
 async def handle_menu(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -404,6 +394,16 @@ async def admin_export_callback(callback: types.CallbackQuery):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
     await export_command(callback.message)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "admin_sync")
+async def admin_sync_callback(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer("⛔ Нет доступа", show_alert=True)
+        return
+    result = sync_to_google_sheets()
+    await callback.message.answer(result)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "admin_users")
@@ -654,7 +654,6 @@ async def main():
     print("🤖 Бот Onboard AI запущен!")
     print("✅ Все функции активны!")
     print(f"👤 Администратор: {ADMIN_ID}")
-    print("🌐 Веб-дашборд доступен по адресу: {PORT}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
