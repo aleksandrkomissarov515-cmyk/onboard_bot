@@ -20,7 +20,7 @@ def run_web_dashboard():
     """Запускает Flask-дашборд в отдельном потоке"""
     try:
         from app import app
-        port = int(os.environ.get('PORT', 5000))
+        port = int(os.environ.get('PORT', 8080))
         app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
     except Exception as e:
         print(f"❌ Ошибка запуска дашборда: {e}")
